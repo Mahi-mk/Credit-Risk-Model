@@ -3,8 +3,8 @@ import numpy as np
 import os
 import mlflow
 import mlflow.sklearn
+import joblib
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
@@ -18,21 +18,14 @@ if not os.path.exists(DATA_PATH):
 
 df = pd.read_csv(DATA_PATH)
 
-# 3. FEATURE SELECTION (Avoid Data Leakage)
-# We exclude the 'Recency', 'Frequency', and 'Monetary' columns because 
-# they were used to create the 'is_high_risk' label (Task 4).
-# Training on them would be "cheating".
-cols_to_exclude = [
-    'TransactionId', 'BatchId', 'AccountId', 'SubscriptionId', 
-    'CustomerId', 'CurrencyCode', 'TransactionStartTime', 
-    'is_high_risk', 'Recency', 'Frequency', 'Monetary', 'Cluster'
-]
-
-# Get only the numeric features (like encoded categories and hours)
-X = df.drop(columns=[c for c in cols_to_exclude if c in df.columns]).select_dtypes(include=[np.number])
+# 3. FEATURE SELECTION (Matching API exactly)
+# We select ONLY the 3 features that the API's TransactionData model uses.
+# This prevents the "feature_names mismatch" error in the browser.
+features_for_api = ['TransactionHour', 'TransactionDay', 'Amount_scaled']
+X = df[features_for_api]
 y = df['is_high_risk']
 
-# 4. SPLIT DATA (80% Train, 20% Test)
+# 4. SPLIT DATA
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
@@ -42,13 +35,9 @@ mlflow.set_experiment("Credit_Scoring_Bati_Bank")
 
 def train_and_log_model(model, name):
     with mlflow.start_run(run_name=name):
-        # Train the model
         model.fit(X_train, y_train)
-        
-        # Make predictions
         preds = model.predict(X_test)
         
-        # Calculate scores
         metrics = {
             "accuracy": accuracy_score(y_test, preds),
             "precision": precision_score(y_test, preds, zero_division=0),
@@ -56,15 +45,11 @@ def train_and_log_model(model, name):
             "f1": f1_score(y_test, preds, zero_division=0)
         }
         
-        # Calculate ROC AUC if the model supports probabilities
         if hasattr(model, "predict_proba"):
             probs = model.predict_proba(X_test)[:, 1]
             metrics["roc_auc"] = roc_auc_score(y_test, probs)
         
-        # Log Metrics and Model to MLflow
         mlflow.log_metrics(metrics)
-        
-        # We use mlflow.sklearn for XGBoost too to avoid the _estimator_type error
         mlflow.sklearn.log_model(model, "model")
             
         print(f"\n[{name}] Results:")
@@ -72,14 +57,16 @@ def train_and_log_model(model, name):
             print(f"  {k}: {v:.4f}")
 
 # 6. RUN THE TRAINING
-print(f"Starting Task 5 with {X.shape[1]} features...")
+print(f"Starting Task 5 with {X.shape[1]} features: {features_for_api}")
 
-# Model 1: Logistic Regression
-lr = LogisticRegression(max_iter=1000, solver='lbfgs')
-train_and_log_model(lr, "Logistic_Regression")
-
-# Model 2: XGBoost
+# Training XGBoost as our 'best_model'
 xgb = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
-train_and_log_model(xgb, "XGBoost")
+train_and_log_model(xgb, "XGBoost_API_Version")
 
-print("\nTask 5 Complete. Run 'mlflow ui' to view the dashboard.")
+# 7. SAVE FOR API
+# This overwrites the old 29-feature model with the new 3-feature model.
+save_path = os.path.join(os.getcwd(), 'src', 'api', 'best_model.pkl')
+os.makedirs(os.path.dirname(save_path), exist_ok=True)
+joblib.dump(xgb, save_path)
+
+print(f"\nTask 5 Complete. Model saved at: {save_path}")

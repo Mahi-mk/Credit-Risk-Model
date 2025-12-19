@@ -1,0 +1,15 @@
+# API and Web Server
+fastapi
+uvicorn
+
+# Machine Learning and Data
+scikit-learn
+pandas
+mlflow
+
+# Testing and Quality Assurance
+pytest
+flake8
+
+# Validation
+pydantic
